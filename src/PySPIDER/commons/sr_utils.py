@@ -9,19 +9,35 @@ def keep_inds(vector, inds):  # set all but inds of vector to 0
 
 
 def smallest_sv(A, inds=None, value=False):
-    if inds is None:
-        U, Sigma, V = np.linalg.svd(A, full_matrices=True)
-    else:
-        inds = list(inds)
-        all_inds = list(range(A.shape[0]))
-        U, Sigma, V = np.linalg.svd(A[:, inds], full_matrices=True)
-        # print("SMALLEST_SV", A[np.ix_(inds, inds)], Sigma)
-        # print("INDS", inds)
-    if value:
-        return Sigma[-1]  # smallest singular value
-    else:
-        V = V.transpose()  # since numpy SVD returns the transpose
-        return V[:, -1]  # smallest singular vector
+    # run with eps = 0 first, if that doesn't work, we use Tikhonov-regularization on increasing offsets
+    for eps in (0, 1e-10, 1e-8, 1e-6, 1e-4):
+        try:
+            B = A
+            if inds != None:
+                B = A[:, inds]
+            # stabilize A by adding eps*I to A^T A
+            ATA = B.T @ B + eps * np.eye(B.shape[1])
+            if not np.all(np.isfinite(B)):
+                raise ValueError(
+                    f"Non-finite values in B: "
+                    f"{np.sum(np.isnan(B))} NaNs, "
+                    f"{np.sum(np.isinf(B))} Infs, "
+                    f"shape={B.shape}"
+                    )
+            U, Sigma, Vt = np.linalg.svd(ATA, full_matrices=True)
+            if value:
+                # Singular values of A are sqrt of eigenvalues of A^T A
+                return np.sqrt(max(Sigma[-1], 0))
+            else:
+                V = Vt.T
+                return V[:, -1]
+        except np.linalg.LinAlgError:
+            print("Failed for: " + str(eps))
+            continue
+    raise RuntimeError("smallest_sv failed for all Tikhonov regularization offsets")
+
+
+    
 
 
 def smallest_eig(A, inds=None, value=False):

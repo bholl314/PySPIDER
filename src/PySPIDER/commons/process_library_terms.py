@@ -596,8 +596,11 @@ class AbstractDataset(object): # template for structure of all data associated w
 
         #precompute symbolic manipulations for parallel tasks
         self.integrated_terms_tuples = []
+        i = 0
         for term in list(self.libs[irrep].terms):
+            i += 1
             if debug:
+                print(f"Processing term {i}/{len(self.libs[irrep].terms)}:")
                 print("UNINDEXED TERM:")
                 print(term)
                 term_symmetry = term.symmetry()
@@ -654,7 +657,7 @@ class AbstractDataset(object): # template for structure of all data associated w
     def make_library_matrices(self, by_parts=True, debug=False, parallel=True, num_processors=None): # compute LibraryData Q matrices
         for irrep in self.irreps:
             if debug:
-                print(f"***{irrep} LIBRARY***")
+                print(f"***{irrep} LIBRARY: ***")
             if parallel:
                 self.libs[irrep].Q = self.make_Q_parallel(irrep, by_parts, debug, num_processors)
             else:
