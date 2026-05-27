@@ -552,6 +552,7 @@ def sparse_reg_bf(
 
     random.seed(seed)
     
+
     # use copies of all mutable objects
     scaler = copy.copy(scaler)
     initializer = copy.copy(initializer)
@@ -566,11 +567,36 @@ def sparse_reg_bf(
         if verbose:
             print('Residual normalization:', residual.norm)
 
-    
     ### PREPROCESSING
     #print("Initial theta:", theta)
     theta = scaler.scale_theta(theta)
     theta = scaler.select_cols(theta)
+
+    # --- SVD/QR Robustness: Check for NaNs/Infs ---
+    if np.isnan(theta).any() or np.isinf(theta).any():
+        raise ValueError("theta contains NaNs or Infs before regression!")
+
+    # --- SVD/QR Robustness: Remove near-zero rows/columns ---
+    row_norms = np.linalg.norm(theta, axis=1)
+    col_norms = np.linalg.norm(theta, axis=0)
+    row_mask = row_norms > 1e-12
+    col_mask = col_norms > 1e-12
+    if not np.all(row_mask):
+        if verbose:
+            print(f"Removing {np.sum(~row_mask)} near-zero rows from theta")
+        theta = theta[row_mask, :]
+    if not np.all(col_mask):
+        if verbose:
+            print(f"Removing {np.sum(~col_mask)} near-zero columns from theta")
+        theta = theta[:, col_mask]
+
+    # --- SVD/QR Robustness: Add small regularization for square matrices ---
+    eps = 1e-8
+    if theta.shape[0] == theta.shape[1]:
+        if verbose:
+            print(f"Adding regularization: {eps} * I to theta")
+        theta = theta + eps * np.eye(theta.shape[0])
+
     if residual.residual_type in ["matrix_relative", "hybrid"]:
         residual.set_norm(np.linalg.norm(theta)) 
         if verbose:
@@ -581,7 +607,7 @@ def sparse_reg_bf(
     represent = lambda term: term if term_names is None else term_names[term]
     if term_names is not None and verbose:
         print(f"Starting regression with the sublibrary {term_names}")
-    
+
     if scaler.train_fraction < 1:
         theta, theta_test = scaler.train_test_split(theta)
         h_test = theta_test.shape[0]
@@ -591,9 +617,26 @@ def sparse_reg_bf(
     test_train_ratio = h_test/h
     # note that ||Theta*c|| is invariant under orthogonal transformations! 
     # so we add QR decomposition for efficiency+better conditioning
-    theta = np.linalg.qr(theta, mode='r')
-    theta_test = (np.linalg.qr(theta_test, mode='r') 
-                  if h_test>0 else None)
+    try:
+        theta_r = np.linalg.qr(theta, mode='r')
+        theta_test_r = (np.linalg.qr(theta_test, mode='r') if h_test > 0 else None)
+    except np.linalg.LinAlgError as e:
+        print("\n[SPIDER REGRESSION WARNING] QR decomposition failed with LinAlgError:", e)
+        print("theta shape:", theta.shape)
+        print("theta min:", np.nanmin(theta), "max:", np.nanmax(theta))
+        print("theta has NaN:", np.isnan(theta).any(), ", Inf:", np.isinf(theta).any())
+        print("theta row norms (min, max):", np.min(np.linalg.norm(theta, axis=1)), np.max(np.linalg.norm(theta, axis=1)))
+        print("theta col norms (min, max):", np.min(np.linalg.norm(theta, axis=0)), np.max(np.linalg.norm(theta, axis=0)))
+        try:
+            # Try fallback: use pseudo-inverse as a last resort
+            print("[SPIDER REGRESSION WARNING] Resorting to np.linalg.pinv for theta...")
+            theta_r = np.linalg.pinv(theta)
+            theta_test_r = np.linalg.pinv(theta_test) if h_test > 0 else None
+        except Exception as e2:
+            print("[SPIDER REGRESSION ERROR] np.linalg.pinv also failed:", e2)
+            raise
+    theta = theta_r
+    theta_test = theta_test_r
         
     ### CHECK ONE-TERM MODELS
     nrm = np.zeros(w)
